@@ -1,0 +1,34 @@
+# Ignore Terraform state files
+terraform/state/terraform.tfstate
+terraform/state/terraform.tfstate.backup
+
+# Ignore Terraform variables file
+terraform/terraform.tfvars
+
+# Ignore SSH keys
+*.pem
+*.key
+
+# Ignore Ansible inventory file
+ansible/hosts
+
+# Ignore any log files
+*.log
+
+# Ignore any temporary files
+*.tmp
+*.swp
+*.swo
+
+# Ignore any compiled files
+*.pyc
+*.class
+
+# Ignore directories created by Terraform
+.terraform/
+
+# Ignore VSCode settings
+.vscode/
+
+# Ignore macOS specific files
+.DS_Store

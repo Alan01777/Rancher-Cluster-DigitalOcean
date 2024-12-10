@@ -1,0 +1,62 @@
+---
+- name: Prepare and install RKE2 server
+  hosts: rancher_servers
+  become: yes
+
+  vars:
+    rke2_token: "{{ hostvars['rancher1']['rke2_token'] }}"
+
+  tasks:
+    - name: Stop and disable firewall on {{ inventory_hostname }}
+      ansible.builtin.systemd:
+        name: ufw
+        state: stopped
+        enabled: no
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+      failed_when: false
+
+    - name: Update and install packages on {{ inventory_hostname }}
+      apt:
+        name:
+          - nfs-common
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Upgrade all packages on {{ inventory_hostname }}
+      apt:
+        upgrade: dist
+        state: latest
+      when: ansible_os_family == "Debian"
+
+    - name: Clean up packages on {{ inventory_hostname }}
+      apt:
+        autoremove: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install RKE2 server on {{ inventory_hostname }}
+      shell: curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=server sh -
+
+    - name: Enable and start RKE2 server service on {{ inventory_hostname }}
+      ansible.builtin.systemd:
+        name: rke2-server
+        state: started
+        enabled: yes
+
+    - name: Wait for kubectl to be available on {{ inventory_hostname }}
+      wait_for:
+        path: /var/lib/rancher/rke2/bin/kubectl
+        state: present
+        timeout: 300
+
+    - name: Symlink kubectl on {{ inventory_hostname }}
+      file:
+        src: /var/lib/rancher/rke2/bin/kubectl
+        dest: /usr/local/bin/kubectl
+        state: link
+
+    - name: Add KUBECONFIG to .bashrc on {{ inventory_hostname }}
+      lineinfile:
+        path: /root/.bashrc
+        line: 'export KUBECONFIG=/etc/rancher/rke2/rke2.yaml'

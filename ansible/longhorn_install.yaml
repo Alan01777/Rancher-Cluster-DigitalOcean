@@ -1,0 +1,32 @@
+# Install longhorn iscsi on all nodes
+- name: Install iscsi on all nodes
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Install iscsi
+      apt:
+        name:
+          - open-iscsi
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+# Install Longhorn on the Rancher server
+- name: Install Longhorn
+  hosts: rancher1
+  become: yes
+
+  tasks:
+    - name: Add Longhorn Helm repository
+      command: helm repo add longhorn https://charts.longhorn.io
+
+    - name: Update Helm repositories
+      command: helm repo update
+
+    - name: Install Longhorn
+      command: >
+        helm install longhorn longhorn/longhorn \
+        --namespace longhorn-system \
+        --create-namespace \
+        --version 1.4.4

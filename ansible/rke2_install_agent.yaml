@@ -1,0 +1,58 @@
+---
+- name: Prepare and install RKE2 agent
+  hosts: rancher_agents
+  become: yes
+
+  vars:
+    rke2_token: "{{ hostvars['rancher1']['rke2_token'] }}"
+    rancher1_ip: "{{ hostvars['rancher1']['ansible_host'] }}"
+
+  tasks:
+    - name: Stop and disable firewall on {{ inventory_hostname }}
+      ansible.builtin.systemd:
+        name: ufw
+        state: stopped
+        enabled: no
+      when: ansible_os_family == "Debian"
+      ignore_errors: yes
+      failed_when: false
+
+    - name: Update and install packages on {{ inventory_hostname }}
+      apt:
+        name:
+          - nfs-common
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Upgrade all packages on {{ inventory_hostname }}
+      apt:
+        upgrade: dist
+        state: latest
+      when: ansible_os_family == "Debian"
+
+    - name: Clean up packages on {{ inventory_hostname }}
+      apt:
+        autoremove: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install RKE2 agent
+      shell: curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=agent sh -
+
+    - name: Create RKE2 agent config directory
+      file:
+        path: /etc/rancher/rke2
+        state: directory
+
+    - name: Create RKE2 agent config file
+      copy:
+        content: |
+          server: https://{{ rancher1_ip }}:9345
+          token: {{ rke2_token }}
+        dest: /etc/rancher/rke2/config.yaml
+
+    - name: Enable and start RKE2 agent service
+      ansible.builtin.systemd:
+        name: rke2-agent
+        state: started
+        enabled: yes
