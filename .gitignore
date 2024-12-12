@@ -10,7 +10,7 @@ terraform/terraform.tfvars
 *.key
 
 # Ignore Ansible inventory file
-ansible/hosts
+ansible/hosts.yml
 
 # Ignore any log files
 *.log

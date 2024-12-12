@@ -37,12 +37,20 @@
 
     - name: Install RKE2 server on {{ inventory_hostname }}
       shell: curl -sfL https://get.rke2.io | INSTALL_RKE2_TYPE=server sh -
+      register: install_rke2
+      retries: 5
+      delay: 30
+      until: install_rke2 is succeeded
 
     - name: Enable and start RKE2 server service on {{ inventory_hostname }}
       ansible.builtin.systemd:
         name: rke2-server
         state: started
         enabled: yes
+      register: start_rke2_server
+      retries: 5
+      delay: 30
+      until: start_rke2_server is succeeded
 
     - name: Wait for kubectl to be available on {{ inventory_hostname }}
       wait_for:

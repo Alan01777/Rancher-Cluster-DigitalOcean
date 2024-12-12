@@ -1,0 +1,145 @@
+# Install Prometheus and Grafana
+- name: Install Prometheus and Grafana
+  hosts: rancher1
+  become: yes
+
+  tasks:
+    - name: Add Prometheus Helm repository
+      command: helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+
+    - name: Add Grafana Helm repository
+      command: helm repo add grafana https://grafana.github.io/helm-charts
+
+    - name: Update Helm repositories
+      command: helm repo update
+
+    - name: Install or Upgrade Prometheus
+      command: >
+        helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+        --namespace monitoring \
+        --create-namespace
+
+    - name: Install or Upgrade Grafana
+      command: >
+        helm upgrade --install grafana grafana/grafana \
+        --namespace monitoring \
+        --create-namespace
+
+# Install EFK Stack
+- name: Install EFK Stack
+  hosts: rancher1
+  become: yes
+
+  tasks:
+    - name: Add Elastic Helm repository
+      command: helm repo add elastic https://helm.elastic.co
+
+    - name: Add Fluent Helm repository
+      command: helm repo add fluent https://fluent.github.io/helm-charts
+
+    - name: Update Helm repositories
+      command: helm repo update
+
+    - name: Install or Upgrade Elasticsearch
+      command: >
+        helm upgrade --install elasticsearch elastic/elasticsearch \
+        --namespace logging \
+        --create-namespace \
+        --set elasticsearch.username=elastic \
+        --set elasticsearch.password=admin@2024
+
+    - name: Install or Upgrade Fluentd
+      command: >
+        helm upgrade --install fluentd fluent/fluentd \
+        --namespace logging \
+        --create-namespace
+
+    - name: Install or Upgrade Kibana
+      command: >
+        helm upgrade --install kibana elastic/kibana \
+        --namespace logging \
+        --create-namespace \
+        --set elasticsearchHosts=https://elasticsearch.logging.svc.cluster.local:9200 \
+        --set elasticsearchUsername=elastic \
+        --set elasticsearchPassword=admin@2024
+
+# Apply Network Policies
+- name: Apply Network Policies
+  hosts: rancher1
+  become: yes
+
+  tasks:
+    - name: Create Network Policy to restrict traffic
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: networking.k8s.io/v1
+          kind: NetworkPolicy
+          metadata:
+            name: default-deny-all
+            namespace: default
+          spec:
+            podSelector: {}
+            policyTypes:
+            - Ingress
+            - Egress
+  
+# Apply RBAC Policies
+- name: Apply RBAC Policies
+  hosts: rancher1
+  become: yes
+
+  tasks:
+    - name: Create ClusterRole
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRole
+          metadata:
+            name: read-only
+          rules:
+          - apiGroups: [""]
+            resources: ["pods", "services", "endpoints", "persistentvolumeclaims"]
+            verbs: ["get", "list", "watch"]
+
+    - name: Create ClusterRoleBinding
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: read-only-binding
+          subjects:
+          - kind: User
+            name: "readonly-user"
+            apiGroup: rbac.authorization.k8s.io
+          roleRef:
+            kind: ClusterRole
+            name: read-only
+            apiGroup: rbac.authorization.k8s.io
+
+# Apply Horizontal Pod Autoscaler
+- name: Apply Horizontal Pod Autoscaler
+  hosts: rancher1
+  become: yes
+
+  tasks:
+    - name: Create HPA for a deployment
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: autoscaling/v1
+          kind: HorizontalPodAutoscaler
+          metadata:
+            name: myapp-hpa
+            namespace: default
+          spec:
+            scaleTargetRef:
+              apiVersion: apps/v1
+              kind: Deployment
+              name: myapp
+            minReplicas: 1
+            maxReplicas: 10
+            targetCPUUtilizationPercentage: 50

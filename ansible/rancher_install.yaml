@@ -16,9 +16,13 @@
 
     - name: Create Cert-Manager Namespace
       command: kubectl create namespace cert-manager
+      register: create_cert_manager_namespace
+      failed_when: create_cert_manager_namespace.rc != 0 and "AlreadyExists" not in create_cert_manager_namespace.stderr
 
     - name: Create Rancher Namespace
       command: kubectl create namespace cattle-system
+      register: create_rancher_namespace
+      failed_when: create_rancher_namespace.rc != 0 and "AlreadyExists" not in create_rancher_namespace.stderr
 
     - name: Add Jetstack Helm repository
       command: helm repo add jetstack https://charts.jetstack.io
@@ -26,8 +30,8 @@
     - name: Update Helm repositories
       command: helm repo update
 
-    - name: Install Cert-Manager
-      command: helm install cert-manager jetstack/cert-manager --namespace cert-manager --version v1.11.0
+    - name: Install or Upgrade Cert-Manager
+      command: helm upgrade --install cert-manager jetstack/cert-manager --namespace cert-manager --version v1.11.0 --wait
 
     - name: Add Rancher Helm repository
       command: helm repo add rancher-stable https://releases.rancher.com/server-charts/stable
@@ -35,9 +39,9 @@
     - name: Update Helm repositories
       command: helm repo update
 
-    - name: Install Rancher
+    - name: Install or Upgrade Rancher
       command: >
-        helm install rancher rancher-stable/rancher \
+        helm upgrade --install rancher rancher-stable/rancher \
           --namespace cattle-system \
           --set hostname={{ rancher_dns }} \
           --set bootstrapPassword=admin \

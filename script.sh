@@ -1,10 +1,24 @@
 #!/bin/bash
 
+# Exit immediately if a command exits with a non-zero status
+set -e
+
 # Colors for visual feedback
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m' # No Color
+
+# Print banner
+echo -e "${YELLOW}"
+echo "   _____  .__                __________________________________ "
+echo "  /  _  \ |  | _____    ____ \   _  \______  \______  \______  \\"
+echo " /  /_\  \|  | \__  \  /    \/  /_\  \  /    /   /    /   /    /"
+echo "/    |    \  |__/ __ \|   |  \  \_/   \/    /   /    /   /    / "
+echo "\____|__  /____(____  /___|  /\_____  /____/   /____/   /____/  "
+echo "        \/          \/     \/       \/                          "
+echo -e "${NC}"
+echo -e "${YELLOW}This script sets up a Rancher cluster with RKE2 and Longhorn.${NC}"
 
 # Initialize variables
 CLOUDFLARE_API_TOKEN=""
@@ -26,17 +40,18 @@ done
 
 # Check if required arguments are provided
 if [ -z "$rancher_dns" ]; then
-  echo -e "${RED}Error: DNS name for Rancher is required. Use -rancher_dns=<DNS_NAME>${NC}"
+  echo -e "${RED}Error: DNS name for Rancher is required. Use --rancher_dns=<DNS_NAME>${NC}"
   exit 1
 fi
 
 if [ -z "$letsEncrypt_email" ]; then
-  echo -e "${RED}Error: Let's Encrypt email is required. Use -letsEncrypt_email=<EMAIL>${NC}"
+  echo -e "${RED}Error: Let's Encrypt email is required. Use --letsEncrypt_email=<EMAIL>${NC}"
   exit 1
 fi
 
 # Initialize Terraform
 echo -e "${YELLOW}Initializing Terraform...${NC}"
+cd terraform
 terraform init
 
 # Apply the Terraform configuration
@@ -45,25 +60,44 @@ terraform apply -auto-approve
 
 # Extract the Terraform output
 echo -e "${YELLOW}Extracting Terraform output...${NC}"
-terraform_output=$(terraform output -json droplet_ip_addresses)
+terraform_output=$(terraform output -json)
+droplet_ip_addresses=$(echo $terraform_output | jq -r '.droplet_ip_addresses.value')
+droplet_names=$(echo $terraform_output | jq -r '.droplet_names.value')
 
-# Parse the JSON output to get the IP addresses
-rancher1_ip=$(echo $terraform_output | jq -r '.rancher1')
-rancher2_ip=$(echo $terraform_output | jq -r '.rancher2')
-rancher3_ip=$(echo $terraform_output | jq -r '.rancher3')
+# Set the first_ip variable to the IP address of the first node
+first_ip=$(echo $droplet_ip_addresses | jq -r '.[0]')
 
-# Generate the Ansible inventory file
+# Generate the Ansible inventory file in YAML format
 echo -e "${YELLOW}Generating Ansible inventory file...${NC}"
-cat <<EOF > rke2/hosts
-[rancher_servers]
-rancher1 ansible_host=${rancher1_ip} ansible_user=root ansible_ssh_private_key_file=~/.ssh/new_droplet_key rke2_token=<rancher1_token> rancher_dns=${rancher_dns} letsEncrypt_email=${letsEncrypt_email} ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-
-[rancher_agents]
-rancher2 ansible_host=${rancher2_ip} ansible_user=root ansible_ssh_private_key_file=~/.ssh/new_droplet_key ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-rancher3 ansible_host=${rancher3_ip} ansible_user=root ansible_ssh_private_key_file=~/.ssh/new_droplet_key ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+cat <<EOF > ../ansible/hosts.yml
+all:
+  children:
+    rancher_servers:
+      hosts:
+        rancher1:
+          ansible_host: ${first_ip}
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/new_droplet_key
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      vars:
+        rancher_dns: ${rancher_dns}
+        letsEncrypt_email: ${letsEncrypt_email}
+    rancher_agents:
+      hosts:
 EOF
 
-echo -e "${GREEN}Ansible inventory file 'rke2/hosts' generated successfully.${NC}"
+# Add the rest of the nodes to rancher_agents
+for i in $(seq 1 $(($(echo $droplet_names | jq length) - 1))); do
+  name=$(echo $droplet_names | jq -r ".[$i]")
+  ip=$(echo $droplet_ip_addresses | jq -r ".[$i]")
+  cat <<EOF >> ../ansible/hosts.yml
+        ${name}:
+          ansible_host: ${ip}
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/new_droplet_key
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+EOF
+done
 
 # Function to test SSH connection
 test_ssh_connection() {
@@ -82,6 +116,35 @@ test_ssh_connection() {
   done
 
   echo -e "${RED}Failed to establish SSH connection to $host after $retries attempts.${NC}"
+  return 1
+}
+
+# Test SSH connections
+for i in $(seq 0 $(($(echo $droplet_names | jq length) - 1))); do
+  name=$(echo $droplet_names | jq -r ".[$i]")
+  ip=$(echo $droplet_ip_addresses | jq -r ".[$i]")
+  test_ssh_connection $ip || exit 1
+done
+
+# Function to extract RKE2 token with retries
+extract_rke2_token() {
+  local host=$1
+  local retries=10
+  local count=0
+  local token=""
+
+  while [ $count -lt $retries ]; do
+    echo -e "${YELLOW}Extracting RKE2 token from the Rancher server (attempt $((count + 1))/$retries)...${NC}" >&2
+    token=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@$host cat /var/lib/rancher/rke2/server/node-token || true)
+    if [ -n "$token" ]; then
+      echo $token
+      return 0
+    fi
+    count=$((count + 1))
+    sleep 10
+  done
+
+  echo -e "${RED}Failed to extract RKE2 token from the Rancher server after $retries attempts.${NC}" >&2
   return 1
 }
 
@@ -132,52 +195,58 @@ update_cloudflare_dns() {
   fi
 }
 
-# Test SSH connections
-test_ssh_connection $rancher1_ip || exit 1
-test_ssh_connection $rancher2_ip || exit 1
-test_ssh_connection $rancher3_ip || exit 1
-
 if [ "$use_cloudflare" == "yes" ]; then
   # Update Cloudflare DNS record
-  update_cloudflare_dns $rancher_dns $rancher1_ip $cloudflare_zone_id $CLOUDFLARE_API_TOKEN
+  update_cloudflare_dns $rancher_dns $first_ip $cloudflare_zone_id $CLOUDFLARE_API_TOKEN
 else
   # Display the IP address for manual DNS record creation
-  echo -e "${YELLOW}Please create a DNS record for ${rancher_dns} pointing to ${rancher1_ip}.${NC}"
+  echo -e "${YELLOW}Please create a DNS record for ${rancher_dns} pointing to ${first_ip}.${NC}"
   echo -e "${YELLOW}Press Enter to continue once the DNS record has been created...${NC}"
   read -r
 fi
 
 # Run the Ansible playbook - Install RKE2 Server
 echo -e "${YELLOW}Running Ansible playbook to install RKE2 server...${NC}"
-ansible-playbook -i rke2/hosts rke2/rke2_install_server.yaml
+ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_server.yaml
 
 # Extract the RKE2 token from the Rancher server
 echo -e "${YELLOW}Extracting RKE2 token from the Rancher server...${NC}"
-rke2_token=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${rancher1_ip} sudo cat /var/lib/rancher/rke2/server/node-token)
-echo -e "${GREEN}Token: ${rke2_token}${NC}"
+rke2_token=$(extract_rke2_token ${first_ip} | sed 's/\x1b\[[0-9;]*m//g')
+if [ $? -ne 0 ]; then
+  exit 1
+fi
 
-# Update the Ansible inventory file with the RKE2 token
-echo -e "${YELLOW}Updating Ansible inventory file with the RKE2 token...${NC}"
-sed -i "s/<rancher1_token>/${rke2_token}/" rke2/hosts
+# Add variables for rancher_agents with actual values
+cat <<EOF >> ../ansible/hosts.yml
+      vars:
+        rke2_token: ${rke2_token}
+        rancher1_ip: ${first_ip}
+EOF
+
+echo -e "${GREEN}Ansible inventory file 'ansible/hosts.yml' generated successfully.${NC}"
 
 # Run the Ansible playbook - Install RKE2 Agent
 echo -e "${YELLOW}Running Ansible playbook to install RKE2 agents...${NC}"
-ansible-playbook -i rke2/hosts rke2/rke2_install_agent.yaml || {
+ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_agent.yaml || {
   echo -e "${RED}Retrying Ansible playbook for rancher3...${NC}"
-  ansible-playbook -i rke2/hosts rke2/rke2_install_agent.yaml --limit rancher3
+  ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_agent.yaml --limit rancher3
 }
 
 # Run the Ansible playbook - Install Rancher
 echo -e "${YELLOW}Running Ansible playbook to install Rancher...${NC}"
-ansible-playbook -i rke2/hosts rke2/rancher_install.yaml
+ansible-playbook -i ../ansible/hosts.yml ../ansible/rancher_install.yaml
 
-# Run the ansible playbook - Install Longhorn
+# Run the Ansible playbook - Install Longhorn
 echo -e "${YELLOW}Running Ansible playbook to install Longhorn...${NC}"
-ansible-playbook -i rke2/hosts rke2/longhorn_install.yaml
+ansible-playbook -i ../ansible/hosts.yml ../ansible/longhorn_install.yaml
+
+# Run post install tasks
+echo -e "${YELLOW}Running post install tasks...${NC}"
+ansible-playbook -i ../ansible/hosts.yml ../ansible/post_install.yaml
 
 # Display all nodes in the cluster
 echo -e "${YELLOW}Displaying all nodes in the cluster...${NC}"
-ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${rancher1_ip} kubectl get nodes
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${first_ip} kubectl get nodes
 
 echo -e "${GREEN}RKE2 and Rancher installation completed successfully.${NC}\n\n"
 echo -e "${YELLOW}Rancher URL: https://${rancher_dns}${NC}"

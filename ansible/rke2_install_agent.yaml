@@ -3,12 +3,8 @@
   hosts: rancher_agents
   become: yes
 
-  vars:
-    rke2_token: "{{ hostvars['rancher1']['rke2_token'] }}"
-    rancher1_ip: "{{ hostvars['rancher1']['ansible_host'] }}"
-
   tasks:
-    - name: Stop and disable firewall on {{ inventory_hostname }}
+    - name: Stop and disable firewall on rancher_agents
       ansible.builtin.systemd:
         name: ufw
         state: stopped
@@ -17,7 +13,7 @@
       ignore_errors: yes
       failed_when: false
 
-    - name: Update and install packages on {{ inventory_hostname }}
+    - name: Update and install packages on rancher_agents
       apt:
         name:
           - nfs-common
@@ -25,13 +21,13 @@
         update_cache: yes
       when: ansible_os_family == "Debian"
 
-    - name: Upgrade all packages on {{ inventory_hostname }}
+    - name: Upgrade all packages on rancher_agents
       apt:
         upgrade: dist
         state: latest
       when: ansible_os_family == "Debian"
 
-    - name: Clean up packages on {{ inventory_hostname }}
+    - name: Clean up packages on rancher_agents
       apt:
         autoremove: yes
       when: ansible_os_family == "Debian"
@@ -45,14 +41,22 @@
         state: directory
 
     - name: Create RKE2 agent config file
-      copy:
-        content: |
-          server: https://{{ rancher1_ip }}:9345
-          token: {{ rke2_token }}
-        dest: /etc/rancher/rke2/config.yaml
+      shell: |
+        echo "server: https://{{ rancher1_ip }}:9345" > /etc/rancher/rke2/config.yaml
+        echo "token: {{ rke2_token }}" >> /etc/rancher/rke2/config.yaml
 
-    - name: Enable and start RKE2 agent service
+    - name: Verify RKE2 agent config file
+      shell: cat /etc/rancher/rke2/config.yaml
+      register: rke2_config
+      failed_when: false
+      changed_when: false
+
+    - name: Enable RKE2 agent service
       ansible.builtin.systemd:
-        name: rke2-agent
-        state: started
+        name: rke2-agent.service
         enabled: yes
+
+    - name: Start RKE2 agent service
+      ansible.builtin.systemd:
+        name: rke2-agent.service
+        state: started

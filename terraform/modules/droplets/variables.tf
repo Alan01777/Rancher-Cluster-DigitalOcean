@@ -17,3 +17,8 @@ variable "droplet_image" {
 variable "ssh_key_id" {
   type = string
 }
+
+variable "vpc_id" {
+  description = "ID of the VPC to use for the droplets"
+  type        = string
+}

@@ -1,52 +1,33 @@
-resource "digitalocean_vpc" "rancher_vpc" {
-  name   = "rancher-vpc"
-  region = var.region
+terraform {
+  backend "local" {
+    path = "./state/terraform.tfstate"
+  }
 }
 
-resource "digitalocean_firewall" "vpc_firewall" {
-  name = "vpc-firewall"
+module "network" {
+  source = "./modules/network"
 
-  droplet_ids = []
+  digitalocean_token = var.digitalocean_token
+  region             = var.region
+  droplet_ids        = module.droplets.droplet_ids
+  external_ips       = module.droplets.droplet_ip_addresses
+}
 
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "80"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
+module "droplets" {
+  source = "./modules/droplets"
 
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "443"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
+  digitalocean_token = var.digitalocean_token
+  region             = var.region
+  droplet_size       = var.droplet_size
+  droplet_image      = var.droplet_image
+  ssh_key_id         = var.ssh_key_id
+  vpc_id             = module.network.vpc_id
+}
 
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "22"
-    source_addresses = ["0.0.0.0/0", "::/0"]
-  }
+output "droplet_ip_addresses" {
+  value = module.droplets.droplet_ip_addresses
+}
 
-  inbound_rule {
-    protocol         = "tcp"
-    port_range       = "all"
-    source_addresses = ["10.0.0.0/8"]
-  }
-
-  inbound_rule {
-    protocol         = "udp"
-    port_range       = "all"
-    source_addresses = ["10.0.0.0/8"]
-  }
-
-  outbound_rule {
-    protocol         = "tcp"
-    port_range       = "all"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
-
-  outbound_rule {
-    protocol         = "udp"
-    port_range       = "all"
-    destination_addresses = ["0.0.0.0/0", "::/0"]
-  }
+output "droplet_names" {
+  value = module.droplets.droplet_names
 }
