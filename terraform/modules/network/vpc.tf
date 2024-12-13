@@ -35,6 +35,13 @@ resource "digitalocean_firewall" "vpc_firewall" {
     source_addresses = var.external_ips
   }
 
+  # Allow elasticsearch port
+  inbound_rule {
+    protocol         = "tcp"
+    port_range       = "9200"
+    source_addresses = ["0.0.0.0/0", "::/0"]
+  }
+
   # Allow all other UDP traffic from the external IPs of the droplets
   inbound_rule {
     protocol         = "udp"

@@ -20,12 +20,32 @@ echo "        \/          \/     \/       \/                          "
 echo -e "${NC}"
 echo -e "${YELLOW}This script sets up a Rancher cluster with RKE2 and Longhorn.${NC}"
 
+# Check if ts command is available, if not install moreutils
+if ! command -v ts &> /dev/null; then
+  echo -e "${YELLOW}Installing moreutils package for ts command...${NC}"
+  apt-get update && apt-get install -y moreutils
+fi
+
 # Initialize variables
 CLOUDFLARE_API_TOKEN=""
 cloudflare_zone_id=""
 use_cloudflare="no"
 rancher_dns=""
 letsEncrypt_email=""
+
+# Ensure directories exist
+mkdir -p terraform/logs
+mkdir -p ansible/logs
+
+# Create log files
+touch terraform/logs/terraform_init.log
+touch terraform/logs/terraform_apply.log
+touch ansible/logs/rke2_install_server.log
+touch ansible/logs/rke2_install_agent.log
+touch ansible/logs/rke2_install_agent_retry.log
+touch ansible/logs/rancher_install.log
+touch ansible/logs/longhorn_install.log
+touch ansible/logs/post_install.log
 
 # Parse command-line arguments
 while [[ "$#" -gt 0 ]]; do
@@ -52,11 +72,11 @@ fi
 # Initialize Terraform
 echo -e "${YELLOW}Initializing Terraform...${NC}"
 cd terraform
-terraform init
+terraform init 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | ts '[%Y-%m-%d %H:%M:%S]' > logs/terraform_init.log
 
 # Apply the Terraform configuration
 echo -e "${YELLOW}Applying Terraform configuration...${NC}"
-terraform apply -auto-approve
+terraform apply -auto-approve 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | ts '[%Y-%m-%d %H:%M:%S]' > logs/terraform_apply.log
 
 # Extract the Terraform output
 echo -e "${YELLOW}Extracting Terraform output...${NC}"
@@ -207,7 +227,7 @@ fi
 
 # Run the Ansible playbook - Install RKE2 Server
 echo -e "${YELLOW}Running Ansible playbook to install RKE2 server...${NC}"
-ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_server.yaml
+ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_server.yaml 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | ts '[%Y-%m-%d %H:%M:%S]' > ../ansible/logs/rke2_install_server.log
 
 # Extract the RKE2 token from the Rancher server
 echo -e "${YELLOW}Extracting RKE2 token from the Rancher server...${NC}"
@@ -227,28 +247,43 @@ echo -e "${GREEN}Ansible inventory file 'ansible/hosts.yml' generated successful
 
 # Run the Ansible playbook - Install RKE2 Agent
 echo -e "${YELLOW}Running Ansible playbook to install RKE2 agents...${NC}"
-ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_agent.yaml || {
+ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_agent.yaml 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | ts '[%Y-%m-%d %H:%M:%S]' > ../ansible/logs/rke2_install_agent.log || {
   echo -e "${RED}Retrying Ansible playbook for rancher3...${NC}"
-  ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_agent.yaml --limit rancher3
+  ansible-playbook -i ../ansible/hosts.yml ../ansible/rke2_install_agent.yaml --limit rancher3 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | ts '[%Y-%m-%d %H:%M:%S]' > ../ansible/logs/rke2_install_agent_retry.log
 }
 
 # Run the Ansible playbook - Install Rancher
 echo -e "${YELLOW}Running Ansible playbook to install Rancher...${NC}"
-ansible-playbook -i ../ansible/hosts.yml ../ansible/rancher_install.yaml
+ansible-playbook -i ../ansible/hosts.yml ../ansible/rancher_install.yaml 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | ts '[%Y-%m-%d %H:%M:%S]' > ../ansible/logs/rancher_install.log
 
 # Run the Ansible playbook - Install Longhorn
 echo -e "${YELLOW}Running Ansible playbook to install Longhorn...${NC}"
-ansible-playbook -i ../ansible/hosts.yml ../ansible/longhorn_install.yaml
+ansible-playbook -i ../ansible/hosts.yml ../ansible/longhorn_install.yaml 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | ts '[%Y-%m-%d %H:%M:%S]' > ../ansible/logs/longhorn_install.log
 
 # Run post install tasks
-echo -e "${YELLOW}Running post install tasks...${NC}"
-ansible-playbook -i ../ansible/hosts.yml ../ansible/post_install.yaml
+# echo -e "${YELLOW}Running post install tasks...${NC}"
+# ansible-playbook -i ../ansible/hosts.yml ../ansible/post_install.yaml 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | ts '[%Y-%m-%d %H:%M:%S]' > ../ansible/logs/post_install.log
+
 
 # Display all nodes in the cluster
 echo -e "${YELLOW}Displaying all nodes in the cluster...${NC}"
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${first_ip} kubectl get nodes
+echo "\n\n"
 
+# Display default password for Kibana
+echo -e "${YELLOW}Retrieving default password for Kibana...${NC}"
+kibana_pass=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${first_ip} kubectl get secret -n logging $(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${first_ip} kubectl get serviceaccount kibana -n logging -o jsonpath='{.secrets[0].name}') -o jsonpath='{.data.elasticsearch-password}' | base64 --decode)
+echo -e "${YELLOW}Default username for Kibana: elastic${NC}"
+echo -e "${YELLOW}Default password for Kibana: ${kibana_pass}${NC}"
+echo "\n"
+
+# Display warning about exposing kibana
+echo -e "${YELLOW} Warning: by default, this script does not expose Kibana to the internet. If you want to access Kibana from outside the cluster, you need to expose the service yourself.${NC}"
+
+echo "\n\n"
+# Display the final message
 echo -e "${GREEN}RKE2 and Rancher installation completed successfully.${NC}\n\n"
 echo -e "${YELLOW}Rancher URL: https://${rancher_dns}${NC}"
 echo -e "${YELLOW}Username: admin${NC}"
 echo -e "${YELLOW}Bootstrap password: admin"
+
