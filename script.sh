@@ -268,19 +268,16 @@ ansible-playbook -i ../ansible/hosts.yml ../ansible/longhorn_install.yaml 2>&1 |
 # Display all nodes in the cluster
 echo -e "${YELLOW}Displaying all nodes in the cluster...${NC}"
 ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${first_ip} kubectl get nodes
-echo "\n\n"
 
 # Display default password for Kibana
 echo -e "${YELLOW}Retrieving default password for Kibana...${NC}"
 kibana_pass=$(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${first_ip} kubectl get secret -n logging $(ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -i ~/.ssh/new_droplet_key root@${first_ip} kubectl get serviceaccount kibana -n logging -o jsonpath='{.secrets[0].name}') -o jsonpath='{.data.elasticsearch-password}' | base64 --decode)
 echo -e "${YELLOW}Default username for Kibana: elastic${NC}"
 echo -e "${YELLOW}Default password for Kibana: ${kibana_pass}${NC}"
-echo "\n"
 
 # Display warning about exposing kibana
 echo -e "${YELLOW} Warning: by default, this script does not expose Kibana to the internet. If you want to access Kibana from outside the cluster, you need to expose the service yourself.${NC}"
 
-echo "\n\n"
 # Display the final message
 echo -e "${GREEN}RKE2 and Rancher installation completed successfully.${NC}\n\n"
 echo -e "${YELLOW}Rancher URL: https://${rancher_dns}${NC}"
